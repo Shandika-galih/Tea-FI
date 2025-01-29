@@ -2,132 +2,154 @@ import dotenv from "dotenv";
 import { ethers } from "ethers";
 import fetch from "node-fetch";
 import cfonts from "cfonts";
-import chalk from'chalk';
+import chalk from "chalk";
+
 // Load environment variables
 dotenv.config();
 
 // Helper function to add delay
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function main() {
+// RPC URL & API
+const RPC_URL = process.env.RPC_URL;
+const API_URL = process.env.API_URL;
+const PRIVATE_KEYS =
+  process.env.PRIVATE_KEYS?.split(",").map((pk) => pk.trim()) || [];
+
+const HEADERS = {
+  Accept: "application/json, text/plain, */*",
+  "Content-Type": "application/json",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+};
+
+// Validasi
+if (!RPC_URL || !API_URL || PRIVATE_KEYS.length === 0) {
+  console.error(
+    "❌ PRIVATE_KEYS, RPC_URL, atau API_URL tidak ditemukan di .env!"
+  );
+  process.exit(1);
+}
+
+// Konfigurasi Provider
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+// Kontrak WMATIC
+const wmaticAbi = ["function deposit() public payable"];
+const wmaticAddress = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
+
+// Jumlah transaksi yang ingin dilakukan
+const LOOPS = 100000;
+const AMOUNT_TO_WRAP = ethers.parseEther("0.00015");
+
+// Tampilkan banner
+cfonts.say("NT Exhaust", {
+  font: "block",
+  align: "center",
+  colors: ["cyan", "magenta"],
+  background: "black",
+  letterSpacing: 1,
+  lineHeight: 1,
+  space: true,
+  maxLength: "0",
+});
+console.log(
+  chalk.green("=== Telegram Channel : NT Exhaust ( @NTExhaust ) ===")
+);
+
+// Fungsi utama untuk setiap wallet
+async function processWallet(privateKey) {
   try {
-    cfonts.say('NT Exhaust', {
-      font: 'block',        // Options: 'block', 'simple', '3d', etc.
-      align: 'center',
-      colors: ['cyan', 'magenta'],
-      background: 'black',
-      letterSpacing: 1,
-      lineHeight: 1,
-      space: true,
-      maxLength: '0',
-    });
-  console.log(chalk.green("=== Telegram Channel : NT Exhaust ( @NTExhaust ) ==="))
-    const privateKey = process.env.PRIVATE_KEY;
-    const rpcUrl = process.env.RPC_URL;
-    const API_URL = process.env.API_URL;
-    const HEADERS = {
-      "Accept": "application/json, text/plain, */*",
-      "Content-Type": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    };
-
-    if (!privateKey || !rpcUrl || !API_URL) {
-      throw new Error("PRIVATE_KEY, RPC_URL, or API_URL is missing in the .env file.");
-    }
-
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(privateKey, provider);
+    console.log(`\n🚀 Memulai transaksi untuk Wallet: ${wallet.address}`);
 
-    console.log("Wallet address:", wallet.address);
+    // Cek saldo awal
+    let balance = await provider.getBalance(wallet.address);
+    console.log(`💰 Saldo awal: ${ethers.formatUnits(balance, "ether")} MATIC`);
 
-    // Check wallet balance
-    const balance = await provider.getBalance(wallet.address);
-    console.log("Wallet Balance (in MATIC):", ethers.formatUnits(balance, "ether"));
-
-    // Ensure balance is sufficient
-    const amountToWrap = ethers.parseEther("0.00015");
-    if (balance < amountToWrap) {
-      throw new Error("Insufficient MATIC balance for the transaction.");
+    if (balance < AMOUNT_TO_WRAP) {
+      console.error(
+        `❌ Saldo tidak cukup untuk transaksi di ${wallet.address}`
+      );
+      return;
     }
 
-    // WMATIC contract details
-    const wmaticAbi = ["function deposit() public payable"];
-    const wmaticAddress = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
-    const wmaticContract = new ethers.Contract(wmaticAddress, wmaticAbi, wallet);
+    const contract = new ethers.Contract(wmaticAddress, wmaticAbi, wallet);
 
-    const loops = 100000;  // Define the number of loops here (can be modified manually)
+    for (let i = 1; i <= LOOPS; i++) {
+      console.log(`\n🔁 [${wallet.address}] Loop ${i} dari ${LOOPS}`);
 
-    // Start looping through the transaction process
-    for (let i = 1; i <= loops; i++) {
-      console.log(`\n🔁 Loop ${i} of ${loops}`);
       let retry = true;
-
       while (retry) {
         try {
-          // Wrap MATIC to WMATIC
-          console.log("Wrapping MATIC to WMATIC...");
-          const txResponse = await wmaticContract.deposit({ value: amountToWrap });
-          console.log("✅ Transaction sent! Hash:", txResponse.hash);
+          console.log(`🔄 [${wallet.address}] Wrapping MATIC to WMATIC...`);
+          const txResponse = await contract.deposit({ value: AMOUNT_TO_WRAP });
+          console.log(`✅ [${wallet.address}] TX Hash: ${txResponse.hash}`);
 
           const receipt = await txResponse.wait();
-          const lastTransactionHash = receipt.transactionHash;
-          console.log("✅ WMATIC wrapped successfully! Transaction Hash:", txResponse.hash);
+          console.log(
+            `✅ [${wallet.address}] Transaksi sukses: ${receipt.transactionHash}`
+          );
 
-          // Prepare API payload
+          // Kirim ke API
           const payload = {
             blockchainId: 137,
             type: 2,
             walletAddress: wallet.address,
             hash: txResponse.hash,
             fromTokenAddress: "0x0000000000000000000000000000000000000000",
-            toTokenAddress: "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",
+            toTokenAddress: wmaticAddress,
             fromTokenSymbol: "POL",
             toTokenSymbol: "WPOL",
-            fromAmount: "150000000000000",
-            toAmount: "150000000000000",
+            fromAmount: AMOUNT_TO_WRAP.toString(),
+            toAmount: AMOUNT_TO_WRAP.toString(),
             gasFeeTokenAddress: "0x0000000000000000000000000000000000000000",
             gasFeeTokenSymbol: "POL",
             gasFeeAmount: "8055000012888000",
           };
 
-          // Send API request
           const response = await fetch(API_URL, {
             method: "POST",
             headers: HEADERS,
             body: JSON.stringify(payload),
           });
 
-          // Check if the response is OK (status code 200)
           if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`❌ API Error: ${response.status} - ${errorText}`);
+            console.error(
+              `❌ [${wallet.address}] API Error: ${response.status}`
+            );
             retry = false;
           } else {
             const result = await response.json();
-            console.log("✅ API Response:", result);
-            retry = false; // Stop retrying if successful
+            console.log(`✅ [${wallet.address}] API Response:`, result);
+            retry = false;
           }
         } catch (error) {
-          console.error(`❌ Error during transaction or API call:`, error.message);
-
-          // Check for rate limit error
+          console.error(`❌ [${wallet.address}] Error:`, error.message);
           if (error.message.includes("Too many requests")) {
-            console.log("⏳ Rate limit hit. Retrying in 1 minutes...");
-            await delay(60000); // Wait for 10 minutes
+            console.log(`⏳ Rate limit! Retry dalam 1 menit...`);
+            await delay(60000);
           } else {
-            retry = false; // Stop retrying for other errors
+            retry = false;
           }
         }
       }
-
-      console.log("🕐 Waiting 1 minute before next transaction...");
-      await delay(2000); // Delay 60 seconds between each loop
+      console.log(
+        `🕐 [${wallet.address}] Menunggu 1 menit sebelum transaksi berikutnya...`
+      );
+      await delay(2000);
     }
-
   } catch (error) {
-    console.error("Error occurred:", error.reason || error.message);
+    console.error(`❌ [ERROR Wallet]`, error.message);
   }
 }
 
-main();
+// Jalankan semua wallet secara paralel
+async function main() {
+  console.log(
+    `🛠 Menjalankan transaksi untuk ${PRIVATE_KEYS.length} wallet...\n`
+  );
+  await Promise.all(PRIVATE_KEYS.map((pk) => processWallet(pk)));
+  console.log("\n✅ Semua transaksi selesai!");
+}
 
+main();
